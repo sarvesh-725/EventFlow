@@ -1,0 +1,795 @@
+Yes. **This is absolutely explainable in an SDE-fresher interview — but only if you deliberately keep the parts whose engineering decisions you can defend.** The biggest mistake would be letting an agent build 100 features and then trying to memorize them.
+
+I also checked current products. The important finding is that your proposed product is **functionally close to an Eventbrite/Townscript-style platform**, not a genuinely new event product. Eventbrite already offers custom registration, free/paid ticketing, QR/manual check-in, analytics, recurring events, timed entry, waitlists, refunds/transfers, etc. ([Eventbrite][1]) Townscript similarly offers custom registration, ticket types, discounts, transfers, cancellation/refunds, and organizer management. ([Townscript][2])
+
+That is **not a problem for a resume project**. The differentiation should come from **what engineering problem you solve deeply**.
+
+# 1. What is actually unusual for a fresher?
+
+Not the technologies themselves.
+
+A fresher using Next.js + PostgreSQL + Prisma + Stripe is not unusual anymore. What is less common is implementing the **failure cases and consistency guarantees correctly**.
+
+| Part                                                      | Fresher-level?                     | Interview value | Keep?               |
+| --------------------------------------------------------- | ---------------------------------- | --------------: | ------------------- |
+| Next.js + React + Tailwind                                | Very common                        |             Low | Yes                 |
+| CRUD event management                                     | Very common                        |             Low | Yes                 |
+| PostgreSQL + Prisma                                       | Common                             |          Medium | Yes                 |
+| RBAC                                                      | Common-ish                         |          Medium | **Yes**             |
+| Resource ownership (`organizer can only edit own events`) | Less often done properly           |            High | **Yes**             |
+| Transactional ticket allocation                           | Above-average                      |   **Very high** | **Definitely**      |
+| Stripe Checkout                                           | Common-ish                         |          Medium | Yes                 |
+| Stripe webhook as payment confirmation                    | Above-average                      |   **Very high** | **Definitely**      |
+| Idempotent payment handling                               | Above-average                      |   **Very high** | **Definitely**      |
+| QR ticket generation                                      | Common                             |      Low/Medium | Yes                 |
+| Duplicate check-in prevention                             | Medium                             |        **High** | **Yes**             |
+| Audit logs                                                | Medium                             |            High | **Yes, but simple** |
+| Background email jobs/retries                             | Medium                             |            High | **Yes**             |
+| Automated integration/E2E tests                           | Above-average for college projects |        **High** | **Definitely**      |
+| CI/CD                                                     | Common-ish                         |          Medium | Yes                 |
+| Sentry/structured logging                                 | Medium                             |          Medium | Yes                 |
+| OpenAPI                                                   | Medium                             |          Medium | Yes                 |
+| Email OTP authentication                                  | Not inherently impressive          |          Medium | **Optional**        |
+| Microservices                                             | Often overengineering              |               — | **No**              |
+
+The particularly good pieces are **payment state + webhook + idempotency + transactional inventory + check-in correctness**.
+
+Those are problems where you can demonstrate actual backend thinking rather than saying:
+
+> “I created an API that inserts a registration into PostgreSQL.”
+
+---
+
+# 2. The single best engineering story in your project
+
+I would make this the centerpiece of your interview.
+
+Suppose an event has **100 tickets left** and 500 people press “Buy” around the same time.
+
+A naïve implementation does:
+
+```text
+read availableTickets
+if availableTickets > 0:
+    create registration
+    availableTickets--
+```
+
+That can oversell because multiple requests can read the same value before anyone updates it.
+
+Your implementation should guarantee:
+
+```text
+Request
+   ↓
+Validate event/ticket/price
+   ↓
+Database transaction
+   ↓
+Atomically reserve/decrement capacity
+   ↓
+Create pending registration
+   ↓
+Create Stripe Checkout Session
+   ↓
+User pays
+   ↓
+Stripe webhook
+   ↓
+Verify webhook signature
+   ↓
+Idempotently process event
+   ↓
+Mark payment successful
+   ↓
+Create ticket
+   ↓
+Generate QR
+   ↓
+Send confirmation asynchronously
+```
+
+PostgreSQL transactions are specifically intended to make a group of operations behave as one atomic unit. ([PostgreSQL][3])
+
+And Stripe's current documentation explicitly recommends webhook-based handling for asynchronous payment events and signature verification, while Stripe's API supports idempotency keys for safe retries. 
+
+**That is an excellent interview story.**
+
+An interviewer can ask:
+
+> “What happens if the webhook arrives twice?”
+
+You answer:
+
+> “The Stripe event ID is recorded with a uniqueness constraint / processed-event record. The second delivery becomes a no-op.”
+
+Then:
+
+> “What happens if two users buy the last ticket simultaneously?”
+
+You explain your transaction and inventory locking/atomic update.
+
+Then:
+
+> “What happens if Stripe says payment succeeded but your application crashes?”
+
+You explain that the webhook can be retried and fulfillment is idempotent.
+
+That sounds considerably more like real backend engineering.
+
+---
+
+# 3. What I would NOT overbuild
+
+There is a danger in your current plan: it could become a **massive checklist project**.
+
+For example:
+
+> OTP + roles + admin + organizer approval + events + ticket types + Stripe + refunds + email + QR + scanning + exports + notifications + monitoring + CI + deployment...
+
+That's a lot.
+
+You don't need every feature to make it impressive.
+
+I would specifically avoid spending much time on:
+
+### Email OTP
+
+It sounds secure, but it creates a surprisingly large security surface:
+
+```text
+OTP generation
+expiration
+attempt limits
+rate limiting
+replay prevention
+code storage/hashing
+email delivery failures
+account enumeration
+```
+
+It is not nearly as valuable in an interview as your payment/inventory correctness.
+
+A secure session-based login is sufficient. You can mention OTP as a future authentication option.
+
+### Elaborate super-admin dashboard
+
+A basic admin console is enough.
+
+You don't need 25 administrative pages.
+
+### Microservices
+
+Absolutely don't add them just to make the architecture look impressive.
+
+Your own proposal to use a **modular monolith** is much easier to justify.
+
+You can say:
+
+> “The domain had multiple modules but did not justify independent deployment or distributed transactions, so I kept them inside one service.”
+
+That's a perfectly defensible architecture decision.
+
+### AI features
+
+I would not bolt on “AI event recommendations” just because AI sounds impressive.
+
+An interviewer can ask very quickly:
+
+> “Why does this application need AI?”
+
+and you may end up with a weak answer.
+
+---
+
+# 4. How is this different from existing event platforms?
+
+The honest answer is:
+
+**Right now, it isn't significantly different as a product.**
+
+That is important.
+
+Current Eventbrite already covers:
+
+* event publishing
+* free/paid registration
+* custom registration forms
+* capacity
+* ticket types
+* QR tickets
+* manual attendee lookup
+* check-in
+* analytics
+* waitlists
+* recurring events
+* timed entry
+* refunds
+* promo codes
+* attendee exports
+
+([Eventbrite][1])
+
+Townscript already has many of those same organizer/ticketing capabilities, including ticket transfers and cancellation/refund workflows. ([Townscript][2])
+
+Meetup leans more toward the **community/group** model: RSVPs, waitlists, and organizer check-in are central concepts. ([Meetup][4])
+
+BookMyShow is much more oriented toward **consumer entertainment discovery and large-scale event operations**, including event listing, marketing, reports, on-ground entry management and even POS/RFID/turnstile-related services. ([BookMyShow][5])
+
+Luma has a somewhat more community/event-host-oriented experience, including customizable registration questions, paid registration, calendar invites, and per-guest online event links. ([Luma Help Center][6])
+
+So don't claim:
+
+> “I built something Eventbrite doesn't have.”
+
+You probably haven't.
+
+Instead say:
+
+> **“I built a focused event-commerce platform and concentrated on correctness around ticket inventory, payments, authorization, and check-in.”**
+
+That's honest and much stronger.
+
+---
+
+# 5. What new feature would I add?
+
+There are two different meanings of “different.”
+
+### Product differentiation
+
+Something the user actually experiences as a different product.
+
+### Engineering differentiation
+
+Something that gives you a significantly better technical discussion.
+
+For an SDE fresher, **engineering differentiation is more valuable**.
+
+My first choice would be:
+
+## Expiring ticket reservations + automatic waitlist promotion
+
+Example:
+
+```text
+100 seats
+
+User A → starts checkout → holds 2 seats
+                 ↓
+             10-minute hold
+                 ↓
+payment succeeds → seats become SOLD
+
+payment abandoned
+       ↓
+hold expires
+       ↓
+seats released
+       ↓
+waitlisted user receives offer
+       ↓
+claim window expires
+       ↓
+next person
+```
+
+This gives you a fantastic combination of:
+
+* database transactions
+* concurrency
+* background jobs
+* time-based state transitions
+* idempotency
+* payment integration
+* waitlists
+* email notifications
+
+Eventbrite already has an automatic waitlist system, including automatically offering newly available spots and expiration of offers, so don't sell this as novel marketplace functionality. ([Eventbrite][7])
+
+Sell it as:
+
+> “I implemented the reservation state machine and made capacity allocation safe under concurrent checkout.”
+
+**That's the interesting part.**
+
+---
+
+# 6. Another excellent addition: offline-first check-in
+
+This one is especially interesting.
+
+Imagine the organizer's internet disappears at the entrance.
+
+Instead of:
+
+```text
+QR scan
+   ↓
+API
+   ↓
+Database
+```
+
+you could have:
+
+```text
+QR scan
+   ↓
+Local ticket cache
+   ↓
+Immediate validation
+   ↓
+Local check-in queue
+   ↓
+Internet returns
+   ↓
+Sync to server
+   ↓
+Conflict resolution
+```
+
+This introduces:
+
+* IndexedDB/local persistence
+* offline-first design
+* synchronization
+* idempotency
+* conflict resolution
+* signed/opaque ticket identifiers
+
+It is also realistic operationally.
+
+However, don't claim this is something competitors don't have. Eventbrite already supports on-device/offline ticket availability in its organizer app. 
+
+So again, the **implementation depth** is what you would discuss.
+
+This is a feature I would add only after the core system is working.
+
+---
+
+# 7. A smaller product feature I'd actually consider
+
+A good medium-sized addition would be:
+
+## Event attendance funnel
+
+Instead of just:
+
+```text
+Tickets sold: 428
+Checked in: 361
+```
+
+show:
+
+```text
+Event views
+     ↓
+Checkout started
+     ↓
+Payment completed
+     ↓
+Tickets issued
+     ↓
+Checked in
+     ↓
+No-show
+```
+
+Then calculate:
+
+```text
+Checkout conversion
+Payment conversion
+Attendance rate
+No-show rate
+Revenue per attendee
+```
+
+This makes the organizer dashboard feel more like a business product rather than a CRUD admin panel.
+
+Eventbrite already provides extensive analytics and reporting, so again this isn't inherently unique. ([Eventbrite][8])
+
+But it creates a good interview discussion around:
+
+> “Which events generate revenue but have poor attendance?”
+
+and
+
+> “How would you model these metrics efficiently at scale?”
+
+---
+
+# 8. I would make one architectural change to your proposal
+
+You currently have:
+
+```text
+User
+Organizer
+Admin
+```
+
+I would **not create separate authentication systems**.
+
+Use one identity model:
+
+```text
+User
+ ├── USER
+ ├── ORGANIZER
+ ├── ADMIN
+ └── EVENT_STAFF
+```
+
+Then have organizer state:
+
+```text
+PENDING
+APPROVED
+SUSPENDED
+```
+
+and event-level permissions:
+
+```text
+Event
+ ├── owner
+ └── staff members
+       ├── CHECK_IN
+       ├── VIEW_ATTENDEES
+       └── MANAGE_EVENT
+```
+
+This produces a much better authorization story:
+
+> “Authentication answers who you are; authorization answers what you can do to this particular event.”
+
+For example:
+
+```text
+Alice = ORGANIZER
+Alice owns Event A
+Alice does NOT own Event B
+```
+
+Therefore:
+
+```text
+PATCH /events/B
+```
+
+must return:
+
+```text
+403 Forbidden
+```
+
+even though Alice is an organizer.
+
+That distinction is something worth understanding extremely well.
+
+---
+
+# 9. Your project should have a small state-machine mindset
+
+This is another thing I'd intentionally build because it makes the system much more explainable.
+
+For registration:
+
+```text
+PENDING
+   ↓
+PAID
+   ↓
+CHECKED_IN
+```
+
+or:
+
+```text
+PENDING
+   ↓
+FAILED
+```
+
+and:
+
+```text
+PAID
+   ↓
+REFUNDED
+```
+
+For events:
+
+```text
+DRAFT
+  ↓
+PUBLISHED
+  ↓
+CANCELLED
+```
+
+For organizer:
+
+```text
+PENDING
+  ↓
+APPROVED
+  ↓
+SUSPENDED
+```
+
+Then your backend becomes a set of **controlled state transitions**, rather than random CRUD updates.
+
+That's very interview-friendly.
+
+---
+
+# 10. The QR code itself isn't impressive
+
+Don't spend too much interview time saying:
+
+> “I used a QR library.”
+
+That's basically implementation detail.
+
+The interesting question is:
+
+> “What happens when somebody screenshots and shares the ticket?”
+
+Your answer should be approximately:
+
+```text
+QR
+ ↓
+opaque/random ticket token
+ ↓
+lookup ticket
+ ↓
+verify it belongs to event
+ ↓
+verify payment/ticket status
+ ↓
+atomic check-in
+ ↓
+reject if already checked in
+```
+
+The important property is:
+
+```text
+CHECKED_IN → CHECKED_IN
+```
+
+must not accidentally result in two successful admissions from concurrent scans.
+
+Again: **correctness > QR generation.**
+
+Eventbrite itself describes rejecting already-used tickets and allowing manual name-based check-in, so this operational model is very real. ([Eventbrite][9])
+
+---
+
+# 11. What I'd actually keep in your final MVP
+
+I'd shrink your huge list into this:
+
+### Core user flow
+
+```text
+Register/login
+    ↓
+Browse/search events
+    ↓
+View event
+    ↓
+Register
+    ↓
+Free registration OR Stripe checkout
+    ↓
+Receive ticket
+    ↓
+View/download QR ticket
+```
+
+### Organizer flow
+
+```text
+Apply as organizer
+       ↓
+Admin approval
+       ↓
+Create draft event
+       ↓
+Publish
+       ↓
+Manage ticket inventory
+       ↓
+View attendees
+       ↓
+Check-in
+       ↓
+Attendance/revenue dashboard
+```
+
+### Admin flow
+
+```text
+Approve/suspend organizer
+Moderate events
+View platform statistics
+Audit important actions
+```
+
+### The four technical “hero” features
+
+```text
+1. Race-safe ticket inventory
+2. Stripe webhook + idempotent payment processing
+3. RBAC + resource-level authorization
+4. Duplicate-safe QR/manual check-in
+```
+
+Then add:
+
+```text
+5. Background email jobs
+6. Automated API/E2E tests
+7. Docker + CI/CD
+8. Logging/monitoring
+```
+
+That's enough.
+
+---
+
+# 12. What I'd want you to be able to explain without looking at the code
+
+Before putting this on your resume, you should be able to whiteboard these seven flows from memory:
+
+### Authentication
+
+```text
+Login
+→ session creation
+→ HttpOnly cookie
+→ authenticated API request
+→ session validation
+```
+
+### Authorization
+
+```text
+request
+→ authenticated user
+→ role check
+→ resource ownership check
+→ action
+```
+
+### Ticket purchase
+
+```text
+request
+→ validate price from server
+→ reserve capacity
+→ create pending registration
+→ Stripe Checkout
+```
+
+### Payment
+
+```text
+Stripe
+→ webhook
+→ signature verification
+→ idempotency
+→ database transaction
+→ ticket issuance
+```
+
+Stripe specifically documents signature verification and recommends returning quickly from webhook endpoints before doing complex work; this is exactly the sort of production behavior you should understand rather than blindly copy. 
+
+### Check-in
+
+```text
+scan
+→ identify ticket
+→ validate event
+→ validate status
+→ atomic check-in
+```
+
+### Cancellation
+
+```text
+event cancelled
+→ prevent new registrations
+→ invalidate future check-in
+→ notify attendees
+→ refund/mark refund state
+```
+
+### Concurrent booking
+
+```text
+100 seats
+500 concurrent requests
+→ only 100 successful allocations
+```
+
+That last one is where I'd expect an interviewer to dig.
+
+---
+
+# 13. One important warning about the “AI agent built it” aspect
+
+This is probably the most important advice I can give you.
+
+**Don't let the agent build something you cannot mentally reconstruct.**
+
+An interviewer doesn't care that the code was generated.
+
+They care when they ask:
+
+> “Why did you use a webhook?”
+
+> “Why isn't the success redirect enough?”
+
+> “What if Stripe sends the same webhook twice?”
+
+> “Why PostgreSQL instead of MongoDB?”
+
+> “How do you prevent overselling?”
+
+> “Why an HttpOnly cookie?”
+
+> “How do you make sure organizer A cannot edit organizer B's event?”
+
+> “What if two scanners check in the same ticket simultaneously?”
+
+> “What happens when the email provider is down?”
+
+> “What happens if the server crashes after payment but before ticket creation?”
+
+If you can answer those, **the fact that an agent helped write the implementation doesn't really matter for the interview discussion**.
+
+If you cannot, the project will feel like a generated black box very quickly.
+
+---
+
+# 14. What I'd call the project
+
+I would **not** put:
+
+> Eventbrite Clone
+
+on your resume.
+
+That immediately frames it as a copy.
+
+Something like:
+
+> **EventFlow — Multi-Organizer Event Ticketing Platform**
+
+or:
+
+> **EventHub — Event Commerce & Check-in Platform**
+
+and describe the engineering:
+
+> **Built a multi-organizer event ticketing platform with PostgreSQL-backed transactional inventory, role-based authorization, Stripe webhook-driven payment fulfillment, QR-based check-in, background notifications, automated E2E testing, and CI/CD.**
+
+Only keep claims you actually implemented and tested.
+
+The standout phrase is **“transactional inventory + webhook-driven fulfillment + idempotent processing”**. That tells an interviewer there is more here than CRUD.
+
+---
+
+# My recommendation in one sentence
+
+**Keep the project, keep the modular monolith, PostgreSQL, RBAC, Stripe, webhooks, idempotency, transactional ticket allocation, QR check-in, tests and deployment; drop unnecessary complexity such as microservices and elaborate OTP/auth machinery, and add one technically deep feature such as expiring ticket holds + waitlist promotion or offline-first check-in.**
+
+And when you compare yourself to Eventbrite/Townscript/Meetup/BookMyShow, **don't pretend your product has a radically new business model — position it as a focused implementation whose differentiator is backend correctness and production-style engineering.** ([Eventbrite][10])

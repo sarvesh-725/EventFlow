@@ -1,0 +1,9 @@
+/node_modules
+.env
+package-lock.json
+.env.*
+!.env.example
+node_modules/
+.next/
+.vercel/
+dist/

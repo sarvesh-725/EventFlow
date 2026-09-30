@@ -1,0 +1,308 @@
+Yes. I would **not send the agent's plan as-is**. There are several places where I would tighten the architecture and explicitly force the agent to build the parts that make the project interview-worthy.
+
+Send the agent this:
+
+Build this as an **interview-explainable production-style MVP**, not as a feature-maximized Eventbrite clone.
+
+### 1. Architecture — change this
+
+* Prefer **one modular monolith / one deployable backend**.
+* Do **not** introduce microservices.
+* Do **not** introduce Redis/BullMQ/Kafka/etc. unless a real requirement appears.
+* Do **not** create a separate worker infrastructure just for appearance.
+* If the existing project already has a separate Node API, keep it; otherwise avoid creating an unnecessary second application.
+* Never have both Express APIs and duplicated Next.js API logic.
+
+### 2. Authentication — change this
+
+* **Do NOT implement email OTP authentication** unless it already exists and is required.
+* Use normal email/password authentication with secure password hashing and **server-side sessions**.
+* Session token must be random, stored server-side, and sent using `HttpOnly + Secure + SameSite` cookie.
+* **Never store auth tokens/JWTs in localStorage.**
+* Add basic rate limiting for login/password-reset-sensitive endpoints.
+* Admin accounts must be seeded/created administratively; **never allow public admin registration**.
+
+### 3. Authorization — make this a major feature
+
+Use one User model with roles, e.g.:
+
+`USER | ORGANIZER | ADMIN`
+
+Do not create separate authentication systems for users and organizers.
+
+Authorization must be enforced server-side:
+
+* Organizer A cannot read/edit Organizer B's events.
+* Organizer cannot modify another organizer's attendees.
+* Staff can check in attendees but cannot manage the whole event.
+* Client-provided `organizerId/userId` must never determine ownership; derive ownership from the authenticated session.
+
+Make resource-level authorization a test case.
+
+### 4. Database/domain model — change this significantly
+
+Do **not** make one giant `Registration` record represent payment + ticket + attendee.
+
+Use clear entities along these lines:
+
+`User`
+`OrganizerProfile`
+`Event`
+`EventStaff`
+`TicketType`
+`Order`
+`OrderItem`
+`Payment`
+`Ticket`
+`CheckIn`
+`Session`
+`AuditLog`
+`Outbox/NotificationJob`
+
+Important:
+
+* Store the **purchased price snapshot** on the OrderItem.
+* Payment status must be separate from ticket/check-in status.
+* Ticket IDs/codes must be unique.
+* Add proper foreign keys, unique constraints, indexes, and enum/state constraints.
+
+### 5. Event lifecycle — add strict business rules
+
+Use explicit states:
+
+`DRAFT → PUBLISHED → CANCELLED`
+
+Avoid allowing arbitrary state changes.
+
+Rules such as:
+
+* Cannot purchase a draft/cancelled event.
+* Once registrations exist, don't casually revert/unpublish it.
+* Cannot reduce capacity below already sold/reserved quantity.
+* Event cancellation blocks new purchases.
+* Existing orders/tickets retain their historical price/status.
+
+These invariants should be enforced in backend logic, not merely UI.
+
+### 6. Ticket inventory — make this one of the HERO features
+
+This is more important than adding more screens.
+
+Implement **transaction-safe capacity allocation**.
+
+Must correctly handle:
+
+* Two users buying the final ticket simultaneously.
+* Concurrent purchases never overselling inventory.
+* Failed/expired payments releasing reservations.
+* Database transaction rollback.
+
+Do not implement:
+
+`read capacity → check → decrement`
+
+as separate unsafe operations.
+
+Include an integration test demonstrating concurrent purchase behavior.
+
+### 7. Add one meaningful differentiator
+
+Add:
+
+**Expiring ticket holds + waitlist promotion**
+
+Example:
+
+`AVAILABLE → HELD (10 min) → PAID`
+
+or
+
+`HELD → EXPIRED → AVAILABLE`
+
+When a hold expires, optionally promote the next waitlisted user.
+
+Do not build an elaborate waitlist product. Keep the state machine and concurrency logic simple and explainable.
+
+### 8. Stripe — make this another HERO feature
+
+Use Stripe Checkout.
+
+Critical rules:
+
+* Price is always calculated from **server/database data**.
+* Never trust amount/price sent by the browser.
+* The browser success redirect must **not** mark an order as paid.
+* Stripe webhook is the authoritative payment confirmation.
+* Verify webhook signatures.
+* Make webhook processing **idempotent**.
+* Duplicate webhook delivery must be safe.
+* Store Stripe event/payment identifiers with appropriate uniqueness constraints.
+* A server crash after payment must not result in a lost ticket.
+* Keep refund/cancellation support as a clean foundation; don't build a huge refund engine.
+
+The key interview scenario should be:
+
+`Stripe payment succeeds → server crashes → webhook retries → exactly one successful fulfillment.`
+
+### 9. Check-in — make this transaction-safe
+
+QR + manual lookup are enough.
+
+Implement:
+
+`scan → find ticket → validate event/status → atomic check-in`
+
+Duplicate scans must be rejected safely, including concurrent scans.
+
+Use a conditional DB update/transaction so two scanners cannot successfully check in the same ticket.
+
+Record:
+
+* check-in time
+* staff/user who checked in
+* ticket/event
+
+### 10. Staff permissions — add
+
+Don't let only the organizer perform check-ins.
+
+Add event-level staff membership:
+
+`EventStaff(eventId, userId, permissions)`
+
+Example permissions:
+
+* CHECK_IN
+* VIEW_ATTENDEES
+
+Staff should not automatically get organizer/admin privileges.
+
+### 11. Notifications — keep simple but reliable
+
+Email confirmations are useful.
+
+Do not build a giant notification platform.
+
+Prefer a small durable **outbox/job record** so the email action is not lost if the request crashes.
+
+Implement retry/failure state.
+
+No Kafka/event-bus architecture.
+
+### 12. Audit logs — keep, but narrow scope
+
+Log important mutations/security actions:
+
+* organizer approved/suspended
+* event published/cancelled
+* event edited
+* refund/cancellation
+* check-in
+* admin moderation
+
+Do not log every GET request or dump sensitive information into logs.
+
+### 13. Analytics — keep simple
+
+Use SQL aggregations.
+
+Useful metrics:
+
+* tickets sold
+* revenue
+* check-ins
+* attendance rate
+* no-show count
+
+Do **not** build a separate analytics pipeline/data warehouse.
+
+### 14. Search — keep simple
+
+Use PostgreSQL search/filter/sort/pagination.
+
+Do **not** introduce Elasticsearch/OpenSearch.
+
+### 15. Tests — explicitly test failure cases
+
+Don't only test happy paths.
+
+Must include tests for:
+
+* cross-organizer authorization failure
+* cancelled event cannot accept registrations
+* concurrent last-ticket purchase
+* duplicate Stripe webhook
+* payment-successful-but-webhook-retried case
+* duplicate/concurrent check-in
+* expired reservation release
+* price cannot be manipulated by client
+* capacity cannot be reduced below sold/reserved tickets
+
+These tests are more valuable than having dozens of superficial UI tests.
+
+### 16. Security
+
+Use:
+
+* Zod validation
+* secure session cookies
+* server-side authorization
+* HTTPS in production
+* appropriate CORS configuration
+* CSRF protection appropriate to the cookie-based architecture
+* rate limiting on sensitive endpoints
+* secrets only in environment variables
+* no sensitive data in logs
+
+Never trust IDs/roles/price/capacity values simply because they came from the frontend.
+
+### 17. Frontend
+
+Keep the existing visual direction and polish it.
+
+Do not spend disproportionate time creating many dashboards/pages.
+
+Prioritize these flows:
+`discover → event → register/pay → ticket`
+and
+`organizer → create/publish → attendees → check-in`
+
+### 18. Deployment
+
+One clean production deployment is enough.
+
+Use:
+
+* Docker
+* PostgreSQL
+* CI
+* migrations
+* environment configuration
+* structured logging
+* basic error monitoring
+
+Do not create complicated multi-region/high-availability infrastructure.
+
+### 19. Most important constraint
+
+**Do not add features merely because Eventbrite has them.**
+
+The project should be impressive because of:
+
+1. transaction-safe inventory
+2. idempotent webhook/payment fulfillment
+3. RBAC + resource-level authorization
+4. duplicate-safe check-in
+5. reliable async notifications
+6. strong integration/E2E tests
+
+Those are the things I want implemented deeply and documented clearly enough that I can explain the design, failure modes, tradeoffs, and database decisions in an interview.
+
+Avoid building functionality that I cannot reasonably explain as the original developer.
+
+The biggest changes from the agent's original plan are **removing OTP, preventing architecture overkill, separating Order/Payment/Ticket, adding expiring holds, and making concurrency/idempotency first-class requirements**. Those changes give you substantially better interview material without turning the project into an unnecessarily huge system. OWASP also specifically recommends secure server-managed sessions and server-side authorization rather than client-held credentials. ([OWASP Cheat Sheet Series][1])
+
+One other architectural point: a single Next.js application can itself expose Route Handlers, so a separate Express service isn't inherently necessary. ([nextjs.org][2])
+
+[1]: https://cheatsheetseries.owasp.org/cheatsheets/Session_Management_Cheat_Sheet.html?utm_source=chatgpt.com "Session Management - OWASP Cheat Sheet Series"
+[2]: https://nextjs.org/docs/app/getting-started/route-handlers?utm_source=chatgpt.com "Getting Started: Route Handlers | Next.js"
