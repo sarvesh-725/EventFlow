@@ -1,0 +1,23 @@
+name: EventFlow jobs
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "*/5 * * * *"
+
+permissions:
+  contents: read
+
+jobs:
+  wake-api-jobs:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Process due outbox jobs
+        env:
+          API_ORIGIN: ${{ secrets.EVENTFLOW_API_ORIGIN }}
+          INTERNAL_JOB_TOKEN: ${{ secrets.EVENTFLOW_INTERNAL_JOB_TOKEN }}
+        run: |
+          curl --fail-with-body --silent --show-error \
+            --request POST \
+            --header "x-internal-job-token: ${INTERNAL_JOB_TOKEN}" \
+            "${API_ORIGIN}/internal/jobs/run"

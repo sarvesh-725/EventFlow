@@ -1,0 +1,9 @@
+services:
+  - type: web
+    name: eventflow-api
+    runtime: node
+    plan: free
+    buildCommand: npm ci && npm run db:generate --workspace=@eventflow/api && npm run build --workspace=@eventflow/api
+    startCommand: npm run start --workspace=@eventflow/api
+    healthCheckPath: /health
+    autoDeploy: true

@@ -5,5 +5,26 @@
 
 node_modules/
 .next/
+dist/
+coverage/
+.vercel/
+*.tsbuildinfo
+apps/*/.env
+apps/*/.env.*
+!apps/*/.env.example
+
+# Keep the legacy prototype's local dependencies/build output out of Git.
+client/node_modules/
+client/.next/
+server/node_modules/
+server/dist/
+
+node_modules/
+.next/
 .vercel/
 dist/
+
+# Ignore documentation and text files
+docs/
+PHASE_PLAN.md
+*.txt

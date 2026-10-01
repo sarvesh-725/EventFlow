@@ -1,0 +1,31 @@
+{
+  "name": "eventflow",
+  "version": "2.0.0",
+  "private": true,
+  "description": "EventFlow v2: a multi-organizer event ticketing and check-in platform.",
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "scripts": {
+    "dev": "concurrently -k -n API,WEB \"npm run dev --workspace=@eventflow/api\" \"npm run dev --workspace=@eventflow/web\"",
+    "build": "npm run build --workspaces --if-present",
+    "typecheck": "npm run typecheck --workspaces --if-present",
+    "lint": "npm run lint --workspaces --if-present",
+    "test": "npm run test --workspaces --if-present",
+    "db:generate": "npm run db:generate --workspace=@eventflow/api",
+    "db:validate": "npm run db:validate --workspace=@eventflow/api",
+    "db:migrate": "npm run db:migrate --workspace=@eventflow/api",
+    "db:deploy": "npm run db:deploy --workspace=@eventflow/api",
+    "db:seed": "npm run db:seed --workspace=@eventflow/api"
+  },
+  "engines": {
+    "node": ">=20.9.0"
+  },
+  "devDependencies": {
+    "@eslint/js": "9.35.0",
+    "concurrently": "9.2.1",
+    "dotenv": "16.6.1",
+    "typescript-eslint": "8.44.0"
+  }
+}
